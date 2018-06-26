@@ -226,6 +226,21 @@ bool ResourceManager::loadFile(const std::string& file)
     return loadFile(def, file, nullptr);
 }
 
+bool ResourceManager::loadFile(const std::string& file, std::function<bool(DataContainer)> callback)
+{
+    return loadFile(def, file, callback);
+}
+
+bool ResourceManager::loadFile(const PackPtr& ptr, const std::string& file)
+{
+    return loadFile(ptr.name, file, nullptr);
+}
+
+bool ResourceManager::loadFile(const PackPtr& ptr, const std::string& file, std::function<bool(DataContainer)> callback)
+{
+    return loadFile(ptr.name, file, callback);
+}
+
 bool ResourceManager::packExist(const std::string& pack) const
 {
     return (root.find(pack) != root.end());
@@ -254,11 +269,58 @@ bool ResourceManager::fileExist(const std::shared_ptr<Pack> &pack, const std::st
     return (pack->find(file) != pack->end());
 }
 
+void ResourceManager::trash(const std::string& pack, const std::string& file)
+{
+    auto it = root.find(pack);
+    if(it == root.end()) return;
+    trash(it->second, file);
+}
+
+void ResourceManager::trash(const std::string& file)
+{
+    trash(def, file);
+}
+
+void ResourceManager::trash(PackPtr& ptr, const std::string& file)
+{
+    if(ptr.pack == nullptr) return;
+    fileExist(ptr.pack, file);
+}
+
+void ResourceManager::trash(std::shared_ptr<Pack> &pack, const std::string& file)
+{
+    Lock lock(mutex);
+    auto it = pack->find(file);
+    if(it == pack->end()) return;
+    if(it->second->data.use_count() == 1)
+    {
+        it->second->data = nullptr;
+        return;
+    }
+    trashbin.insert(it->second);
+}
+
+void ResourceManager::garbageCollector()
+{
+    Lock lock(mutex);
+    auto it = trashbin.begin();
+    while(it != trashbin.end())
+    {
+        auto current = it++;
+        if((*current)->data.use_count() == 1)
+        {
+            (*current)->data = nullptr;
+            trashbin.erase(current);
+        }
+    }
+}
+
 bool ResourceManager::getPackPtr(const std::string& pack, PackPtr& ptr)
 {
     auto it = root.find(pack);
     if(it == root.end()) return false;
     ptr.pack = it->second;
+    ptr.name = pack;
     return true;
 }
 
