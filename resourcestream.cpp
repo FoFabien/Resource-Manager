@@ -12,8 +12,15 @@ MemoryStream::~MemoryStream()
 
 bool MemoryStream::open(const std::string& pack, const std::string& file, ResourceManager& rm)
 {
-    if(!rm.loadFile(pack, file)) return false;
-    raw = rm.getData(pack, file);
+    PackPtr ptr;
+    if(!rm.getPackPtr(pack, ptr)) return false;
+    return open(ptr, file, rm);
+}
+
+bool MemoryStream::open(PackPtr& ptr, const std::string& file, ResourceManager& rm)
+{
+    if(!rm.loadFile(ptr, file)) return false;
+    raw = rm.getData(ptr, file);
     pos = 0;
     if(raw != nullptr) return true;
     return false;
@@ -24,16 +31,16 @@ std::streampos MemoryStream::read(void* data, size_t size)
     if(raw == nullptr) return false;
 
     RawVector &ref = *raw;
-    if(pos + size >= ref.size())
+    size_t start, end;
+    start = pos;
+
+    for(end = pos; end < ref.size() && end-pos < size; ++end)
     {
-        std::copy(ref.begin()+pos, ref.end(), (uint8_t*)data);
-        return (ref.size()-pos);
+        *((uint8_t*)data) = ref[end];
+        data = static_cast<char*>(data) + 1;
     }
-    else
-    {
-        std::copy(ref.begin()+pos, ref.begin()+pos+size, (uint8_t*)data);
-        return size;
-    }
+    pos = end;
+    return end - start;
 }
 
 std::streampos MemoryStream::seek(std::streampos position)
@@ -69,18 +76,42 @@ FileStream::~FileStream()
 
 bool FileStream::open(const std::string& pack, const std::string& file, ResourceManager& rm)
 {
+    PackPtr ptr;
+    if(!rm.getPackPtr(pack, ptr)) return false;
+    return open(ptr, file, rm);
+}
+
+bool FileStream::open(PackPtr& ptr, const std::string& file, ResourceManager& rm)
+{
     in.close();
-    data = rm.getDataContainer(pack, file);
-    if(data.off == 0) return false;
+    data = rm.getDataContainer(ptr, file);
+    if(ptr.name.empty())
+    {
+        if(!rm.fileExist(ptr, file)) return false;
 
-    in.open(pack, std::ios::in | std::ios::binary);
-    if(!in) return false;
+        in.open(file, std::ios::in | std::ios::binary);
+        if(!in) return false;
 
-    keys = ResourceManager::readKeys(in);
-    in.seekg(data.off);
-    in.read((char*)&keys.first, 4);
-    if(!in.good()) return false;
-    keys.first = keys.first ^ keys.second;
+        keys = {0, 0};
+
+        data.size = in.tellg();
+        in.seekg(0, std::ios::end);
+        data.size = (size_t)in.tellg() - data.size;
+        in.seekg(0, std::ios::beg);
+    }
+    else
+    {
+        if(data.off == -1) return false;
+
+        in.open(ptr.name, std::ios::in | std::ios::binary);
+        if(!in) return false;
+
+        keys = ResourceManager::readKeys(in);
+        in.seekg(data.off);
+        in.read((char*)&keys.first, 4);
+        if(!in.good()) return false;
+        keys.first = keys.first ^ keys.second;
+    }
     seed = keys;
     pos = 0;
 
@@ -126,6 +157,5 @@ std::streampos FileStream::tell()
 
 std::streampos FileStream::getSize()
 {
-    if(!in) return -1;
     return data.size;
 }

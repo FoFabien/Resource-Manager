@@ -14,12 +14,13 @@ class ResourceStream
         virtual std::streampos getSize() = 0;
 };
 
-class MemoryStream: public ResourceStream
+class MemoryStream: public ResourceStream // stream file from memory
 {
     public:
         MemoryStream();
         virtual ~MemoryStream();
         bool open(const std::string& pack, const std::string& file, ResourceManager& rm);
+        bool open(PackPtr& ptr, const std::string& file, ResourceManager& rm);
         virtual std::streampos read(void* data, size_t size);
         virtual std::streampos seek(std::streampos position);
         virtual std::streampos tell();
@@ -29,12 +30,13 @@ class MemoryStream: public ResourceStream
         RawPtr raw;
 };
 
-class FileStream: public ResourceStream
+class FileStream: public ResourceStream // stream file from disk (packed or unpacked)
 {
     public:
         FileStream();
         virtual ~FileStream();
         bool open(const std::string& pack, const std::string& file, ResourceManager& rm);
+        bool open(PackPtr& ptr, const std::string& file, ResourceManager& rm);
         virtual std::streampos read(void* data, size_t size);
         virtual std::streampos seek(std::streampos position);
         virtual std::streampos tell();

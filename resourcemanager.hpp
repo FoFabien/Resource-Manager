@@ -17,22 +17,17 @@ typedef std::shared_ptr<RawVector> RawPtr; // shared ptr to binary data
 struct DataContainer // pretty much define a file in memory
 {
     size_t size = 0; // its size
-    std::streampos off = 0; // offset in the data pack
+    std::streampos off = -1; // offset in the data pack
     RawPtr data; // binary data ptr (if loaded)
 };
 typedef std::map<std::string, DataContainer*> Pack; // a data pack
 typedef std::map<std::string, std::shared_ptr<Pack> > Root; // multiple data pack
 typedef std::lock_guard<std::mutex> Lock; // to make lock_guard less verboose
 typedef std::pair<size_t, size_t> Keys; // encrytion keys
-
-// ptr to a data pack only accessible by ResourceManager
-class ResourceManager;
-struct PackPtr
+struct PackPtr // only ResourceManager should modify these values (keeping them public for more control)
 {
-    private:
-        friend class ResourceManager;
-        std::string name;
-        std::shared_ptr<Pack> pack;
+    std::string name;
+    std::shared_ptr<Pack> pack;
 };
 
 
@@ -53,8 +48,8 @@ class ResourceManager
         bool loadFile(const std::string& pack, const std::string& file, std::function<bool(DataContainer)> callback); // same but call the callback if successful. The function return true on success. The loaded file is passed as parameter
         bool loadFile(const std::string& file); // same but use the pack defined as default
         bool loadFile(const std::string& file, std::function<bool(DataContainer)> callback); // same but use the pack defined as default + call the callback
-        bool loadFile(const PackPtr& ptr, const std::string& file); // same but use the pack in the pack ptr
-        bool loadFile(const PackPtr& ptr, const std::string& file, std::function<bool(DataContainer)> callback); // same but use the pack in the pack ptr + call the callback
+        bool loadFile(PackPtr& ptr, const std::string& file); // same but use the pack in the pack ptr
+        bool loadFile(PackPtr& ptr, const std::string& file, std::function<bool(DataContainer)> callback); // same but use the pack in the pack ptr + call the callback
         bool fileExist(const std::string& pack, const std::string& file) const; // check if the file exists in the specified pack
         bool fileExist(const std::string& file) const; // check if the file exists in the default pack
         bool fileExist(const PackPtr& ptr, const std::string& file) const; // check if the file exists in the pack ptr
@@ -64,6 +59,9 @@ class ResourceManager
         void trash(const std::string& file);
         void trash(PackPtr& ptr, const std::string& file);
         void garbageCollector();
+        bool restore(const std::string& pack, const std::string& file);
+        bool restore(const std::string& file);
+        bool restore(PackPtr& ptr, const std::string& file);
 
         // data manipulation
         RawPtr getData(const std::string& pack, const std::string& file); // return the shared ptr of the specified file in the pack
@@ -86,15 +84,19 @@ class ResourceManager
     protected:
         // functions, internal use only
         static void clearPack(Pack &pack); // clear the content
-        bool fileExist(const std::shared_ptr<Pack> &pack, const std::string& file) const; // the shared ptr isn't null checked
-        void trash(std::shared_ptr<Pack> &pack, const std::string& file); // the shared ptr isn't null checked
+        bool loadFile(std::shared_ptr<Pack> &pack, const std::string& pack_name, const std::string& file, std::function<bool(DataContainer)> callback); // the shared ptr isn't null checked
+        bool fileExist(const std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk) const; // the shared ptr isn't null checked
+        void trash(std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk); // the shared ptr isn't null checked
+        bool restore(std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk); // the shared ptr isn't null checked
         RawPtr getData(std::shared_ptr<Pack> &pack, const std::string& file); // the shared ptr isn't null checked
         DataContainer getDataContainer(std::shared_ptr<Pack> &pack, const std::string& file); // the shared ptr isn't null checked
 
         // members
         std::string def; // default pack name
+        std::shared_ptr<Pack> def_pack; // default pack
         Root root; // contains all the pack
         std::set<DataContainer*> trashbin; // for the garbage collector
+        std::set<DataContainer*> disk_trashbin; // for the garbage collector (on disk files)
         std::mutex mutex; // the used mutex
 };
 

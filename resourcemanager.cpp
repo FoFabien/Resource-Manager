@@ -9,6 +9,8 @@
 ResourceManager::ResourceManager()
 {
     def = "";
+    root[""] = std::make_shared<Pack>();
+    def_pack = root[""];
 }
 
 ResourceManager::~ResourceManager()
@@ -73,7 +75,11 @@ bool ResourceManager::loadResources(const std::string& file, const bool &isDefau
 
     // set as default if the needed
     if(isDefault)
+    {
         def = file;
+        def_pack = pack;
+    }
+
     mutex.unlock();
     return true;
 
@@ -181,29 +187,68 @@ bool ResourceManager::loadFile(const std::string& pack, const std::string& file)
 
 bool ResourceManager::loadFile(const std::string& pack, const std::string& file, std::function<bool(DataContainer)> callback)
 {
+    auto it = root.find(pack);
+    if(it == root.end()) return false;
+    return loadFile(it->second, pack, file, callback);
+}
+
+bool ResourceManager::loadFile(const std::string& file)
+{
+    return loadFile(def_pack, def, file, nullptr);
+}
+
+bool ResourceManager::loadFile(const std::string& file, std::function<bool(DataContainer)> callback)
+{
+    return loadFile(def_pack, def, file, callback);
+}
+
+bool ResourceManager::loadFile(PackPtr& ptr, const std::string& file)
+{
+    return loadFile(ptr.pack, ptr.name, file, nullptr);
+}
+
+bool ResourceManager::loadFile(PackPtr& ptr, const std::string& file, std::function<bool(DataContainer)> callback)
+{
+    return loadFile(ptr.pack, ptr.name, file, callback);
+}
+
+bool ResourceManager::loadFile(std::shared_ptr<Pack> &pack, const std::string& pack_name, const std::string& file, std::function<bool(DataContainer)> callback)
+{
     std::ifstream f;
-    Keys keys;
+    Keys keys = {0, 0};
     size_t tmp;
     RawVector *raw;
-    Root::iterator it;
     Pack::iterator file_it;
 
     Lock lock(mutex);
 
-    it = root.find(pack);
-    if(it == root.end()) return false;
-    file_it = it->second->find(file);
-    if(file_it == it->second->end()) return false;
-    if(file_it->second->data != nullptr) return true; // already loaded
+    file_it = pack->find(file);
+    if(pack_name.empty()) // non packed file (on disk)
+    {
+        f.open(file, std::ios::in | std::ios::binary);
+        if(!f) return false;
+        if(file_it == pack->end()) (*pack)[file] = new DataContainer();
+        file_it = pack->find(file);
+        file_it->second->off = 0;
+        file_it->second->size = f.tellg();
+        f.seekg(0, std::ios::end);
+        file_it->second->size = (size_t)f.tellg() - file_it->second->size;
+        f.seekg(0, std::ios::beg);
+    }
+    else // packed file
+    {
+        if(file_it == pack->end()) return false;
+        if(file_it->second->data != nullptr) return true; // already loaded
 
-    f.open(pack, std::ios::in | std::ios::binary);
-    if(!f) return false;
-    keys = readKeys(f);
+        f.open(pack_name, std::ios::in | std::ios::binary);
+        if(!f) return false;
+        keys = readKeys(f);
 
-    f.seekg(file_it->second->off);
-    f.read((char*)&tmp, 4);
-    if(!f.good()) return false;
-    keys.first = tmp ^ keys.second;
+        f.seekg(file_it->second->off);
+        f.read((char*)&tmp, 4);
+        if(!f.good()) return false;
+        keys.first = tmp ^ keys.second;
+    }
 
     if(file_it->second->size > 0)
     {
@@ -221,26 +266,6 @@ bool ResourceManager::loadFile(const std::string& pack, const std::string& file,
     return true;
 }
 
-bool ResourceManager::loadFile(const std::string& file)
-{
-    return loadFile(def, file, nullptr);
-}
-
-bool ResourceManager::loadFile(const std::string& file, std::function<bool(DataContainer)> callback)
-{
-    return loadFile(def, file, callback);
-}
-
-bool ResourceManager::loadFile(const PackPtr& ptr, const std::string& file)
-{
-    return loadFile(ptr.name, file, nullptr);
-}
-
-bool ResourceManager::loadFile(const PackPtr& ptr, const std::string& file, std::function<bool(DataContainer)> callback)
-{
-    return loadFile(ptr.name, file, callback);
-}
-
 bool ResourceManager::packExist(const std::string& pack) const
 {
     return (root.find(pack) != root.end());
@@ -250,54 +275,62 @@ bool ResourceManager::fileExist(const std::string& pack, const std::string& file
 {
     auto it = root.find(pack);
     if(it == root.end()) return false;
-    return fileExist(it->second, file);
+    return fileExist(it->second, file, pack.empty());
 }
 
 bool ResourceManager::fileExist(const std::string& file) const
 {
-    return fileExist(def, file);
+    return fileExist(def_pack, file, def.empty());
 }
 
 bool ResourceManager::fileExist(const PackPtr& ptr, const std::string& file) const
 {
     if(ptr.pack == nullptr) return false;
-    return fileExist(ptr.pack, file);
+    return fileExist(ptr.pack, file, ptr.name.empty());
 }
 
-bool ResourceManager::fileExist(const std::shared_ptr<Pack> &pack, const std::string& file) const
+bool ResourceManager::fileExist(const std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk) const
 {
-    return (pack->find(file) != pack->end());
+    bool r = (pack->find(file) != pack->end());
+    if(!r && disk)
+    {
+        std::ifstream f(file, std::ios::in | std::ios::binary);
+        if(!f) return false;
+        return true;
+    }
+    return r;
 }
 
 void ResourceManager::trash(const std::string& pack, const std::string& file)
 {
     auto it = root.find(pack);
     if(it == root.end()) return;
-    trash(it->second, file);
+    trash(it->second, file, pack.empty());
 }
 
 void ResourceManager::trash(const std::string& file)
 {
-    trash(def, file);
+    trash(def_pack, file, def.empty());
 }
 
 void ResourceManager::trash(PackPtr& ptr, const std::string& file)
 {
     if(ptr.pack == nullptr) return;
-    fileExist(ptr.pack, file);
+    trash(ptr.pack, file, ptr.name.empty());
 }
 
-void ResourceManager::trash(std::shared_ptr<Pack> &pack, const std::string& file)
+void ResourceManager::trash(std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk)
 {
     Lock lock(mutex);
     auto it = pack->find(file);
-    if(it == pack->end()) return;
+    if(it == pack->end() || it->second->data == nullptr) return;
     if(it->second->data.use_count() == 1)
     {
         it->second->data = nullptr;
         return;
     }
-    trashbin.insert(it->second);
+    if(disk) disk_trashbin.insert(it->second);
+    else trashbin.insert(it->second);
 }
 
 void ResourceManager::garbageCollector()
@@ -313,6 +346,63 @@ void ResourceManager::garbageCollector()
             trashbin.erase(current);
         }
     }
+    it = disk_trashbin.begin();
+    while(it != disk_trashbin.end())
+    {
+        auto current = it++;
+        if((*current)->data.use_count() == 1)
+        {
+            (*current)->data = nullptr;
+            delete (*current);
+            disk_trashbin.erase(current);
+        }
+    }
+}
+
+bool ResourceManager::restore(const std::string& pack, const std::string& file)
+{
+    auto it = root.find(pack);
+    if(it == root.end()) return false;
+    return restore(it->second, file, pack.empty());
+}
+
+bool ResourceManager::restore(const std::string& file)
+{
+    return restore(def_pack, file, def.empty());
+}
+
+bool ResourceManager::restore(PackPtr& ptr, const std::string& file)
+{
+    if(ptr.pack == nullptr) return false;
+    return restore(ptr.pack, file, ptr.name.empty());
+}
+
+bool ResourceManager::restore(std::shared_ptr<Pack> &pack, const std::string& file, const bool &disk)
+{
+    Lock lock(mutex);
+    auto it = pack->find(file);
+    if(it == pack->end() || it->second->data == nullptr) return false;
+
+    if(!disk)
+    {
+        auto jt = trashbin.find(it->second);
+        if(jt != trashbin.end())
+        {
+            trashbin.erase(jt);
+            return true;
+        }
+    }
+    else
+    {
+        auto jt = disk_trashbin.find(it->second);
+        if(jt != disk_trashbin.end())
+        {
+            disk_trashbin.erase(jt);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool ResourceManager::getPackPtr(const std::string& pack, PackPtr& ptr)
@@ -333,7 +423,7 @@ RawPtr ResourceManager::getData(const std::string& pack, const std::string& file
 
 RawPtr ResourceManager::getData(const std::string& file)
 {
-    return getData(def, file);
+    return getData(def_pack, file);
 }
 
 RawPtr ResourceManager::getData(PackPtr& ptr, const std::string& file)
@@ -359,7 +449,7 @@ DataContainer ResourceManager::getDataContainer(const std::string& pack, const s
 
 DataContainer ResourceManager::getDataContainer(const std::string& file)
 {
-    return getDataContainer(def, file);
+    return getDataContainer(def_pack, file);
 }
 
 DataContainer ResourceManager::getDataContainer(PackPtr& ptr, const std::string& file)
